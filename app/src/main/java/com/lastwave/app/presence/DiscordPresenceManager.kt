@@ -262,11 +262,13 @@ class DiscordPresenceManager @Inject constructor(
      */
     private suspend fun clearQuiet(reconnectIfMissing: Boolean = false) {
         lastKey = ""
-        val active = transport ?: if (reconnectIfMissing && DiscordPresence.isConfigured()) {
-            ensureConnected(SystemClock.elapsedRealtime())
-        } else {
-            null
-        } ?: return
+        val active = transport ?: (
+            if (reconnectIfMissing && DiscordPresence.isConfigured()) {
+                ensureConnected(SystemClock.elapsedRealtime())
+            } else {
+                null
+            }
+        ) ?: return
         val cleared = runCatching { active.clearActivity() }
             .onFailure { Log.w(TAG, "Discord presence clear failed", it) }
             .getOrDefault(false)
