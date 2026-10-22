@@ -79,6 +79,9 @@ object DiscordPresence {
      */
     const val RETRY_INTERVAL_MS = 15_000L
 
+    /** Keep a paused track visible briefly, then remove the card entirely. */
+    const val PAUSED_CLEAR_DELAY_MS = 30_000L
+
     /** Asset key the desktop client uploads as the LastWave logo. */
     const val FALLBACK_ASSET = "logo"
 
@@ -167,6 +170,12 @@ object DiscordPresence {
      */
     fun isPlayingForPresence(state: MusicPlayerState): Boolean =
         state.isPlaying || state.isBuffering
+
+    /** Stable identity for pause-timeout handling; artwork/quality changes do not reset it. */
+    fun trackIdentity(state: MusicPlayerState): String {
+        val track = state.current ?: return "none"
+        return listOf(track.videoId.orEmpty(), track.title, track.artist).joinToString("|")
+    }
 
     /**
      * Everything the card renders that is not a position tick. Two states with
