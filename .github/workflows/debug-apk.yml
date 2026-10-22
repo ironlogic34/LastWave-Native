@@ -1,0 +1,58 @@
+name: Build Debug APK (fix/rp)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ fix/rp ]
+    paths:
+      - 'app/**'
+      - 'audio/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradlew'
+      - '.github/workflows/debug-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-debug:
+    name: Test and build debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-37" "build-tools;37.0.0" "cmake;3.22.1"
+
+      - name: Run unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fix-rp-unit-test-reports
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: LastWave-fix-rp-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
