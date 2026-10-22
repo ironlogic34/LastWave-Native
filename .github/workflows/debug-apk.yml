@@ -39,7 +39,11 @@ jobs:
       - name: Install Android SDK components
         run: |
           yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platforms;android-37" "build-tools;37.0.0" "cmake;3.22.1"
+          sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "cmake;3.22.1"
+          # sdkmanager publishes API 37 under android-37.0, while this project's
+          # Android Gradle Plugin resolves compileSdk 37 as android-37.
+          # Add the compatibility alias so Gradle can find android.jar.
+          ln -s "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
 
       - name: Run unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
