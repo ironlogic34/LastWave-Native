@@ -76,6 +76,9 @@ class DiscordPresenceManager @Inject constructor(
     )
     private var observer: Job? = null
     private var heartbeat: Job? = null
+    private var pausedClearJob: Job? = null
+    private var pausedTrackIdentity: String? = null
+    private var expiredPausedTrackIdentity: String? = null
 
     @Synchronized
     fun start() {
@@ -120,15 +123,37 @@ class DiscordPresenceManager @Inject constructor(
         lock.withLock {
             // Disabled or unconfigured: hide anything still on the profile.
             if (!enabled || !DiscordPresence.isConfigured()) {
+                cancelPausedClear()
+                expiredPausedTrackIdentity = null
                 deferredArtwork.cancel()
                 clearQuiet()
                 return
             }
             val track = state.current
             if (track == null || track.title.isBlank()) {
+                cancelPausedClear()
+                expiredPausedTrackIdentity = null
                 deferredArtwork.cancel()
                 clearQuiet()
                 return
+            }
+            val trackIdentity = DiscordPresence.trackIdentity(state)
+            if (DiscordPresence.isPlayingForPresence(state)) {
+                cancelPausedClear()
+                expiredPausedTrackIdentity = null
+            } else {
+                if (pausedTrackIdentity != trackIdentity) {
+                    cancelPausedClear()
+                    pausedTrackIdentity = trackIdentity
+                    expiredPausedTrackIdentity = null
+                    schedulePausedClear(trackIdentity)
+                }
+                if (expiredPausedTrackIdentity == trackIdentity) {
+                    // Keep it cleared after the timeout; the heartbeat must not
+                    // republish the same paused track every 15 seconds.
+                    clearQuiet()
+                    return
+                }
             }
             // The track's own http(s) art is exact; otherwise take whatever
             // the multi-provider pipeline (Apple -> Tidal -> Deezer ->
@@ -203,6 +228,34 @@ class DiscordPresenceManager @Inject constructor(
         return fresh?.also { transport = it }
     }
 
+    /** Starts one timeout for this paused track; heartbeat evaluations do not reset it. */
+    private fun schedulePausedClear(trackIdentity: String) {
+        pausedClearJob = applicationScope.launch(Dispatchers.Default) {
+            delay(DiscordPresence.PAUSED_CLEAR_DELAY_MS)
+            lock.withLock {
+                val latest = musicPlayer.state.value
+                val latestIdentity = DiscordPresence.trackIdentity(latest)
+                if (!enabled || !DiscordPresence.isConfigured() ||
+                    latestIdentity != trackIdentity ||
+                    DiscordPresence.isPlayingForPresence(latest)
+                ) {
+                    return@withLock
+                }
+                deferredArtwork.cancel()
+                expiredPausedTrackIdentity = trackIdentity
+                if (pausedTrackIdentity == trackIdentity) pausedClearJob = null
+                clearQuiet()
+                Log.d(TAG, "Discord presence cleared after 30 seconds paused")
+            }
+        }
+    }
+
+    private fun cancelPausedClear() {
+        pausedClearJob?.cancel()
+        pausedClearJob = null
+        pausedTrackIdentity = null
+    }
+
     /**
      * Hides the card without tearing the connection down, and forgets the last
      * signature so the next real track is never deduped away as "unchanged".
@@ -210,12 +263,21 @@ class DiscordPresenceManager @Inject constructor(
     private fun clearQuiet() {
         lastKey = ""
         val active = transport ?: return
-        runCatching { active.clearActivity() }
-            .onFailure { Log.d(TAG, "Discord presence clear ignored", it) }
+        val cleared = runCatching { active.clearActivity() }
+            .onFailure { Log.w(TAG, "Discord presence clear failed", it) }
+            .getOrDefault(false)
+        if (!cleared) {
+            Log.w(TAG, "Discord presence clear was rejected; dropping connection")
+            runCatching { active.close() }
+            if (transport === active) transport = null
+            lastAttemptMs = SystemClock.elapsedRealtime()
+        }
     }
 
     /** Best-effort clear + release. Never throws. */
     suspend fun shutdown() {
+        cancelPausedClear()
+        expiredPausedTrackIdentity = null
         heartbeat?.cancel()
         heartbeat = null
         observer?.cancel()
