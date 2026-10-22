@@ -126,7 +126,7 @@ class DiscordPresenceManager @Inject constructor(
                 cancelPausedClear()
                 expiredPausedTrackIdentity = null
                 deferredArtwork.cancel()
-                clearQuiet()
+                clearQuiet(reconnectIfMissing = true)
                 return
             }
             val track = state.current
@@ -134,7 +134,7 @@ class DiscordPresenceManager @Inject constructor(
                 cancelPausedClear()
                 expiredPausedTrackIdentity = null
                 deferredArtwork.cancel()
-                clearQuiet()
+                clearQuiet(reconnectIfMissing = true)
                 return
             }
             val trackIdentity = DiscordPresence.trackIdentity(state)
@@ -151,7 +151,7 @@ class DiscordPresenceManager @Inject constructor(
                 if (expiredPausedTrackIdentity == trackIdentity) {
                     // Keep it cleared after the timeout; the heartbeat must not
                     // republish the same paused track every 15 seconds.
-                    clearQuiet()
+                    clearQuiet(reconnectIfMissing = true)
                     return
                 }
             }
@@ -244,7 +244,7 @@ class DiscordPresenceManager @Inject constructor(
                 deferredArtwork.cancel()
                 expiredPausedTrackIdentity = trackIdentity
                 if (pausedTrackIdentity == trackIdentity) pausedClearJob = null
-                clearQuiet()
+                clearQuiet(reconnectIfMissing = true)
                 Log.d(TAG, "Discord presence cleared after 30 seconds paused")
             }
         }
@@ -260,9 +260,13 @@ class DiscordPresenceManager @Inject constructor(
      * Hides the card without tearing the connection down, and forgets the last
      * signature so the next real track is never deduped away as "unchanged".
      */
-    private fun clearQuiet() {
+    private suspend fun clearQuiet(reconnectIfMissing: Boolean = false) {
         lastKey = ""
-        val active = transport ?: return
+        val active = transport ?: if (reconnectIfMissing && DiscordPresence.isConfigured()) {
+            ensureConnected(SystemClock.elapsedRealtime())
+        } else {
+            null
+        } ?: return
         val cleared = runCatching { active.clearActivity() }
             .onFailure { Log.w(TAG, "Discord presence clear failed", it) }
             .getOrDefault(false)
